@@ -157,3 +157,12 @@ void Mesh::print_info()
         }
     }
 }
+void Mesh::set_gl_buffers(ShadingType shading_type)
+{
+    set_gl_position_buffer_();
+
+    if (pmesh_->HasVertexColors(0))
+        set_gl_color_buffer_(0);
+
+    set_gl_normal_buffer_(shading_type);
+}
