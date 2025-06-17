@@ -1,10 +1,8 @@
 #version 120
 
-// 정점 셰이더에서 넘겨받은 값들
-varying vec3 v_position;
 varying vec3 v_normal;
+varying vec3 v_position;
 
-// uniform 값들
 uniform vec3 u_camera_position;
 uniform vec3 u_light_position;
 
@@ -24,20 +22,16 @@ void main()
     vec3 V = normalize(u_camera_position - v_position);
     vec3 R = reflect(-L, N);
 
-    // Ambient
     vec3 ambient = u_light_ambient * u_obj_ambient;
 
-    // Diffuse
     float diff = max(dot(N, L), 0.0);
     vec3 diffuse = u_light_diffuse * u_obj_diffuse * diff;
 
-    // Specular
     float spec = 0.0;
     if (diff > 0.0)
         spec = pow(max(dot(R, V), 0.0), u_obj_shininess);
     vec3 specular = u_light_specular * u_obj_specular * spec;
 
-    // 최종 색상
     vec3 final_color = ambient + diffuse + specular;
     gl_FragColor = vec4(final_color, 1.0);
 }
