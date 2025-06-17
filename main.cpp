@@ -27,7 +27,9 @@
 #include <assimp/postprocess.h>
 
 #include "Camera.h"
-#include "Object.h"
+#include "Model.h"
+#include "Mesh.h"
+#include "Light.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 /// initialization 관련 변수 및 함수
@@ -38,35 +40,56 @@ bool init_scene(const std::string& filename);
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
+/// shading 관련 변수
+//////////////////////////////////////////////////////////////////////////////// 
+glm::vec3 g_clear_color(0.5f, 0.5f, 0.5f);
+////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////
 /// 쉐이더 관련 변수 및 함수
 ////////////////////////////////////////////////////////////////////////////////
 GLuint  program;          // 쉐이더 프로그램 객체의 레퍼런스 값
 GLint   loc_a_position;   // attribute 변수 a_position 위치
 GLint   loc_a_color;      // attribute 변수 a_color 위치
-
 GLint   loc_u_PVM;        // uniform 변수 u_PVM 위치
 
-GLuint  position_buffer;  // GPU 메모리에서 position_buffer의 위치
-GLuint  color_buffer;     // GPU 메모리에서 color_buffer의 위치
-GLuint  index_buffer;     // GPU 메모리에서 index_buffer의 위치
+GLint   loc_u_view_matrix;
+GLint   loc_u_model_matrix;
+GLint   loc_u_normal_matrix;
+
+GLint   loc_u_camera_position;
+GLint   loc_u_light_position;
+
+GLint   loc_u_light_ambient;
+GLint   loc_u_light_diffuse;
+GLint   loc_u_light_specular;
+
+GLint   loc_u_obj_ambient;
+GLint   loc_u_obj_diffuse;
+GLint   loc_u_obj_specular;
+GLint   loc_u_obj_shininess;
+GLint   loc_a_normal;
 
 GLuint create_shader_from_file(const std::string& filename, GLuint shader_type);
 void init_shader_program();
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
+/// 카메라 관련 변수 및 함수
+////////////////////////////////////////////////////////////////////////////////
+std::vector<Camera> g_cameras;
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
 /// 렌더링 관련 변수 및 함수
 ////////////////////////////////////////////////////////////////////////////////
-const aiScene* scene;             // scene
-
-std::vector<Camera> g_cameras;    // cameras in the scene
-std::vector<Object> g_objects;    // objects in the scene
-
-int g_cam_select_idx = 0;
-int g_obj_select_idx = 0;
+std::vector<Model> g_models;
+Light g_light;
 
 bool load_asset(const std::string& filename);
-void render_scene();              // rendering 함수: Scene의 물체(삼각형)를 렌더링하는 함수.
+// void init_buffer_objects();     // VBO init 함수: GPU의 VBO를 초기화하는 함수.
+void render_object();           // rendering 함수: 물체(삼각형)를 렌더링하는 함수.
 void render(GLFWwindow* window);
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -77,6 +100,9 @@ ImFont* font = NULL;
 std::string font_path = "../../../../third_party/fonts/NotoSansKR/NotoSansKR-Regular.otf";
 float font_size_pixels = 18.0f;
 bool is_font_loaded = false;
+
+int g_obj_select_idx = 0;
+int g_cam_select_idx = 0;
 
 void init_imgui(GLFWwindow* window);
 void compose_imgui_frame(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -120,28 +146,15 @@ GLFWwindow* createWindow(int width, int height, const char* title)
 
 void scroll_callback(GLFWwindow* window, double x, double y)
 {
-  Camera& camera = g_cameras[g_cam_select_idx];
-
-  if (camera.mode() == Camera::kPerspective)
-  {
-    float fovy = camera.fovy();
-    fovy += y*2.f;
-    camera.set_fovy(fovy);
-  }
-  else if (camera.mode() == Camera::kOrtho)
-  {
-    float ortho_scale = camera.ortho_scale();
-    ortho_scale += y*0.2f;
-    camera.set_ortho_scale(ortho_scale);
-  }
+  float Fovy = g_cameras[g_cam_select_idx].fovy();
+  Fovy += y;
+  g_cameras[g_cam_select_idx].set_fovy(Fovy);
 }
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-  Object& object = g_objects[g_obj_select_idx];
-
-  glm::vec3 translate = object.get_translate();
-  glm::vec3 scale = object.get_scale();
+  glm::vec3 translate = g_models[g_obj_select_idx].get_translate();
+  glm::vec3 scale = g_models[g_obj_select_idx].get_scale();
   
   // move left
   if (key == GLFW_KEY_H && action == GLFW_PRESS) 
@@ -162,21 +175,18 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
   if (key == GLFW_KEY_MINUS && action == GLFW_PRESS)
     scale -= 0.1f;
   
-  object.set_translate(translate);
-  object.set_scale(scale);
-
+  g_models[g_obj_select_idx].set_translate(translate);
+  g_models[g_obj_select_idx].set_scale(scale);
 
   // camera extrinsic parameter
-  Camera& camera = g_cameras[g_cam_select_idx];
-
   if (key == GLFW_KEY_A && action == GLFW_PRESS)
-    camera.move_left(0.1f);
+    g_cameras[g_cam_select_idx].move_left(0.1f);
   if (key == GLFW_KEY_D && action ==GLFW_PRESS)
-    camera.move_right(0.1f);
+  g_cameras[g_cam_select_idx].move_right(0.1f);
   if (key == GLFW_KEY_W && action == GLFW_PRESS)
-    camera.move_forward(0.1f);
+    g_cameras[g_cam_select_idx].move_forward(0.1f);
   if (key == GLFW_KEY_S && action == GLFW_PRESS)
-    camera.move_backward(0.1f);
+    g_cameras[g_cam_select_idx].move_backward(0.1f);
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -225,8 +235,8 @@ bool init_scene(const std::string& filename)
     fin >> vec_scale[0] >> vec_scale[1] >> vec_scale[2] 
         >> vec_translate[0] >> vec_translate[1] >> vec_translate[2];
 
-    g_objects[i].set_scale(vec_scale);
-    g_objects[i].set_translate(vec_translate);
+    g_models[i].set_scale(vec_scale);
+    g_models[i].set_translate(vec_translate);
   }
 
   // init g_cameras
@@ -285,39 +295,24 @@ void init_imgui(GLFWwindow* window)
 
 
 bool load_asset(const std::string& filename)
-{
-  // TODO
-  
-  const aiScene* curr_scene = aiImportFile(filename.c_str(), aiProcessPreset_TargetRealtime_MaxQuality);
-  if (curr_scene != nullptr)
+{  
+  Model model;
+  if (model.load_model(filename))
   {
-      for (unsigned int i = 0; i < curr_scene->mNumMeshes; ++i) 
-      {
-          Object obj(curr_scene->mMeshes[i]);
-          obj.init_buffer_objects();
-  
-          std::string obj_name = filename + "_mesh" + std::to_string(i);
-          obj.set_name(obj_name);
-  
-          g_objects.push_back(obj);
-      }
-      // aiReleaseImport(curr_scene);  // 필요 시 명시적 해제
-      return true;
+    g_models.push_back(model);
+    return true;
   }
   else 
-  {
-      std::cerr << "Failed to load model: " << filename << std::endl;
-      return false;
-  }
+    return false;
 }
-  
+
 void compose_imgui_frame()
 {
   // Start the Dear ImGui frame
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
-
+  
   if (!is_font_loaded)
   {
     ImGui::PushFont(font);
@@ -328,25 +323,64 @@ void compose_imgui_frame()
   {
     ImGui::Begin("모델(model)");
 
-    for (std::size_t i = 0; i < g_objects.size(); i++)
+    for (std::size_t i = 0; i < g_models.size(); i++)
     {
-      ImGui::RadioButton(g_objects[i].get_name().c_str(), &g_obj_select_idx, i);
+      ImGui::RadioButton(g_models[i].get_name().c_str(), &g_obj_select_idx, i);
     }
 
-    Object& object = g_objects[g_obj_select_idx];
-    
-    glm::vec3 translate = object.get_translate();
-    glm::quat quat;   object.get_rotate(quat);
-    glm::vec3 scale = object.get_scale();
+    Model& model = g_models[g_obj_select_idx];
+
+    glm::vec3 translate = model.get_translate();
+    glm::quat quat;   model.get_rotate(quat);
+    glm::vec3 scale = model.get_scale();
 
     ImGui::SliderFloat3("Tranlsate", glm::value_ptr(translate), -10.0f, 10.0f);
     ImGui::gizmo3D("Rotation", quat);
     ImGui::SliderFloat3("Scale", glm::value_ptr(scale), 0.1f, 2.0f);
 
-    object.set_translate(translate);
-    object.set_rotate(quat);
-    object.set_scale(scale);
+    model.set_translate(translate);
+    model.set_rotate(quat);
+    model.set_scale(scale);
 
+    
+    ImGui::NewLine();
+
+    ImGui::Text("Shading");
+    ShadingType prev_shading_type = model.shading_type;
+    bool is_flat_shading = prev_shading_type ? kFlat : kSmooth;
+    ImGui::Checkbox("Flat shading: ", &is_flat_shading);
+    model.shading_type = is_flat_shading ? ShadingType::kFlat : ShadingType::kSmooth;
+    if (model.shading_type != prev_shading_type)
+    {
+      for (std::size_t i = 0; i < model.meshes.size(); ++i)
+      {
+        Mesh& mesh = model.meshes[i];
+
+        mesh.set_gl_buffers(model.shading_type);
+      }
+      std::cout << "shading changed" << std::endl;
+    }    
+    ImGui::NewLine();
+
+    ImGui::Text("Materials");
+
+   
+    std::string label;
+    for (std::size_t i = 0; i < model.meshes.size(); ++i)
+    {
+      Mesh& mesh = model.meshes[i];
+
+      label = mesh.material.name + "-ambient";
+      ImGui::ColorEdit3(label.c_str(), glm::value_ptr(mesh.material.ambient));
+      label = mesh.material.name + "-diffuse";
+      ImGui::ColorEdit3(label.c_str(), glm::value_ptr(mesh.material.diffuse));
+      label = mesh.material.name + "-specular";
+      ImGui::ColorEdit3(label.c_str(), glm::value_ptr(mesh.material.specular));
+      label = mesh.material.name + "-shininess";
+      ImGui::SliderFloat(label.c_str(), &mesh.material.shininess, 0.0f, 500.0f);
+      ImGui::NewLine();
+    }
+    
     ImGui::End();
   }
 
@@ -388,6 +422,22 @@ void compose_imgui_frame()
     ImGui::gizmo3D("Rotation", quat_cam);
     camera.set_pose(quat_cam, vec_cam_pos);
     
+    ImGui::End();
+  }
+
+  {
+    ImGui::Begin("light");
+
+    ImGui::ColorEdit3("background color", glm::value_ptr(g_clear_color));
+
+    glm::vec3 vec(-g_light.pos); 
+    ImGui::gizmo3D("Light direction", vec);
+    g_light.pos = -vec;
+
+    ImGui::ColorEdit3("ambient light", glm::value_ptr(g_light.ambient));
+    ImGui::ColorEdit3("diffuse light", glm::value_ptr(g_light.diffuse));
+    ImGui::ColorEdit3("specular light", glm::value_ptr(g_light.specular));
+
     ImGui::End();
   }
 
@@ -491,32 +541,72 @@ void init_shader_program()
 
   loc_a_position = glGetAttribLocation(program, "a_position");
   loc_a_color = glGetAttribLocation(program, "a_color");
+
+// TODO: get locations of the GPU uniform/attribute variables 
+//       for implementing Phong reflection model
+loc_a_normal         = glGetAttribLocation(program, "a_normal");
+
+loc_u_model_matrix   = glGetUniformLocation(program, "u_model_matrix");
+loc_u_normal_matrix  = glGetUniformLocation(program, "u_normal_matrix");
+loc_u_view_matrix    = glGetUniformLocation(program, "u_view_matrix");
+
+loc_u_camera_position = glGetUniformLocation(program, "u_camera_position");
+loc_u_light_position  = glGetUniformLocation(program, "u_light_position");
+
+loc_u_light_ambient   = glGetUniformLocation(program, "u_light_ambient");
+loc_u_light_diffuse   = glGetUniformLocation(program, "u_light_diffuse");
+loc_u_light_specular  = glGetUniformLocation(program, "u_light_specular");
+
+loc_u_obj_ambient     = glGetUniformLocation(program, "u_obj_ambient");
+loc_u_obj_diffuse     = glGetUniformLocation(program, "u_obj_diffuse");
+loc_u_obj_specular    = glGetUniformLocation(program, "u_obj_specular");
+loc_u_obj_shininess   = glGetUniformLocation(program, "u_obj_shininess");
+
+
 }
 
-void render_scene()
+void render_object()
 {
-  glm::mat4 mat_model, mat_view, mat_proj, mat_PVM;
+  Camera& camera = g_cameras[g_cam_select_idx];
 
   // set transform
-  const Camera& camera = g_cameras[g_cam_select_idx];
-
-  // TODO : set transform using the current camera
-  mat_view = camera.get_view_matrix();
-  mat_proj = camera.get_projection_matrix();
+  glm::mat4 mat_view = camera.get_view_matrix();
+  glm::mat4 mat_proj = camera.get_projection_matrix();
 
 
   // 특정 쉐이더 프로그램 사용
   glUseProgram(program);
 
-  for (std::size_t i = 0; i < g_objects.size(); ++i)
-  {
-    // TODO : draw each object
-    mat_model = g_objects[i].get_model_matrix();
-    mat_PVM = mat_proj * mat_view * mat_model;
-    glUniformMatrix4fv(loc_u_PVM, 1, GL_FALSE, glm::value_ptr(mat_PVM));
-    g_objects[i].draw(loc_a_position, loc_a_color);
+// TODO : send uniform for camera & light to GPU
+glUniform3fv(loc_u_camera_position, 1, glm::value_ptr(camera.position()));
+glUniform3fv(loc_u_light_position, 1, glm::value_ptr(g_light.pos));
 
-  }
+glUniform3fv(loc_u_light_ambient, 1, glm::value_ptr(g_light.ambient));
+glUniform3fv(loc_u_light_diffuse, 1, glm::value_ptr(g_light.diffuse));
+glUniform3fv(loc_u_light_specular, 1, glm::value_ptr(g_light.specular));
+
+for (std::size_t i = 0; i < g_models.size(); ++i)
+{
+  Model& model = g_models[i];
+
+  // TODO : set mat_model, mat_normal, mat_PVM 
+  glm::mat4 mat_model = model.get_model_matrix();
+  glm::mat4 mat_view = camera.get_view_matrix();
+  glm::mat4 mat_proj = camera.get_projection_matrix();
+
+  glm::mat4 mat_PVM = mat_proj * mat_view * mat_model;
+  glm::mat3 mat_normal = glm::transpose(glm::inverse(glm::mat3(mat_model)));
+
+  // TODO : send uniform data for model to GPU
+  glUniformMatrix4fv(loc_u_model_matrix, 1, GL_FALSE, glm::value_ptr(mat_model));
+  glUniformMatrix3fv(loc_u_normal_matrix, 1, GL_FALSE, glm::value_ptr(mat_normal));
+  glUniformMatrix4fv(loc_u_PVM, 1, GL_FALSE, glm::value_ptr(mat_PVM));
+
+  model.draw(loc_a_position, loc_a_normal,
+             loc_u_obj_ambient, loc_u_obj_diffuse,
+             loc_u_obj_specular, loc_u_obj_shininess);
+}
+
 
   // 쉐이더 프로그램 사용해제
   glUseProgram(0);
@@ -524,13 +614,13 @@ void render_scene()
 
 void render(GLFWwindow* window) 
 {
-  glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+  glClearColor(g_clear_color[0], g_clear_color[1], g_clear_color[2], 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glfwPollEvents();
   compose_imgui_frame();
 
-  render_scene();
+  render_object();
 
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
