@@ -95,15 +95,13 @@ void Mesh::set_gl_normal_buffer_(ShadingType shading_type)
     for (std::size_t i = 0; i < v_smooth_normals.size(); ++i)
         v_smooth_normals[i] = glm::normalize(v_smooth_normals[i]);
 
-    // HasNormals() 있으면 오버라이드
-    if (pmesh_->HasNormals())
-    {
-        for (std::size_t i = 0; i < v_smooth_normals.size(); ++i)
-        {
-            aiVector3D& n = pmesh_->mNormals[i];
-            v_smooth_normals[i] = glm::normalize(glm::vec3(n.x, n.y, n.z));
-        }
-    }
+// Assimp에서 가져온 노멀을 사용하지 않고, 직접 계산한 노멀 사용
+// if (pmesh_->HasNormals()) {
+//     for (std::size_t i = 0; i < v_smooth_normals.size(); ++i) {
+//         aiVector3D& n = pmesh_->mNormals[i];
+//         v_smooth_normals[i] = glm::normalize(glm::vec3(n.x, n.y, n.z));
+//     }
+// }
 
     for (std::size_t i = 0; i < tv_indices_.size(); ++i)
     {
